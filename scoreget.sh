@@ -58,11 +58,11 @@ while (true); do
         screen -p 0 -S aziServer -X eval 'stuff "w @s a\015"'
         screen -p 0 -S aziServer -X eval 'stuff "w @s a\015"'
     fi
-    readonly DISCORD_BOT_TOKEN="ODg2OTgwOTgwOTY2MDYwMDQy.YT9faQ.KctQ0ExTwlSW3YPwAfivnBtCiis" 2>/dev/null
-    readonly DISCORD_CHANNEL_ID="889904430797946960" 2>/dev/null #azi_errorlog
-    readonly DISCORD_CHANNEL_CMD="886979867558694992" 2>/dev/null #azi_cmd
-    readonly WEBHOOK_CMD="https://discord.com/api/webhooks/891256458862268417/AOWiU1hZwJ3FRFRlOoZWulBU2M3K5KFRvbjzzl6lU3XBoPcP1uTrjQdYE_EfNR9Qe4jr" 2>/dev/null #azi_cmd
-    readonly WEBHOOK_URL="https://discord.com/api/webhooks/886909187605549056/Y5VJyUtpKgeVP5TysefsPE84fG6VE_xfWAiY3WmO4_oCWy_3H66J0rceW9958gIy11Ak" 2>/dev/null #azi_ranking
+    readonly DISCORD_BOT_TOKEN="トークン廃棄済み" 2>/dev/null
+    readonly DISCORD_CHANNEL_ID="xxx" 2>/dev/null #azi_errorlog
+    readonly DISCORD_CHANNEL_CMD="xxx" 2>/dev/null #azi_cmd
+    readonly WEBHOOK_CMD="https://discord.com/api/webhooks/xxx" 2>/dev/null #azi_cmd
+    readonly WEBHOOK_URL="https://discord.com/api/webhooks/xxx" 2>/dev/null #azi_ranking
     exportCheck=`tail -n 1 azi_server/data/export.txt`
     if [[ `date '+%H%M%S'` = '030000' || "${exportCheck::6}" = "reload" ]] ; then 
         rm baseRank.txt
@@ -169,6 +169,6 @@ while (true); do
 done
 #issued server command: /w @s ランキング参照
 #sudo kill `ps aux | grep 'scoreget' | awk '{ print $2 }'`
-#bot`s taken ODg2OTgwOTgwOTY2MDYwMDQy.YT9faQ.KctQ0ExTwlSW3YPwAfivnBtCiis
-#cliant ID https://discord.com/oauth2/authorize?client_id=886980980966060042&scope=bot&permissions=0
+#bot`s taken トークン廃棄済み
+#cliant ID
 

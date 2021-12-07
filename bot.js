@@ -12,7 +12,7 @@ var ipget = ''
 // Discord Clientのインスタンス作成
 const client = new Discord.Client();
 
-const token = 'ODg2OTgwOTgwOTY2MDYwMDQy.YT9faQ.KctQ0ExTwlSW3YPwAfivnBtCiis';
+const token = 'トークン廃棄済み';
 
 client.on('ready', () => {
     console.log(`${client.user.tag} でログインしています。`)
@@ -114,4 +114,4 @@ client.on('message', msg => {
 client.login(token);
 
 //https://liginc.co.jp/370260
-//https://discord.com/developers/applications/886980980966060042/information
+//https://discord.com/developers/applications/xxx
