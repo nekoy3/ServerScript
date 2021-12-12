@@ -52,34 +52,26 @@ secTemp = []
 sections = []
 
 for line in iniList do
-    puts line
-    #if line == "[General]" then
-    #    general = true
-    #elsif general then
-    #    if line.include?("GeyserSpigotURL=") then
-    #        gsURL = line.sub("GeyserSpigotURL=","")
-    #        general = false
-    #    else
-    #        write_log("[ERROR]Can't read GeyserSpigotURL.")
-    #        stop_script
-    #    end
     if (line =~ /\[(.+)\]/) != nil then
-        puts "sectionフラグ開始"
         sectionFlag = true
         sectionName = line.match(/^\[(.*)\]/)[0]
         secTemp.push(sectionName)
     elsif sectionFlag then
         if line == "" then
-            puts "sectionフラグ終了"
             sectionFlag = false
             sections.push(secTemp)
             secTemp = []
         else
             secTemp.push(line)
         end
-    else
-        puts "空白行"
     end
 end
 puts sections.to_s
+
+write_log("Reading General section...")
+if sections[0][0] != "[General]" do
+    write_log("Description in an invalid format. Please set up the General section first.")
+    stop_script
+END
+sections[0][1]
 stop_script
