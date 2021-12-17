@@ -2,6 +2,82 @@
 require 'fileutils'
 require 'open3'
 
+#メインメソッド
+def main
+    #A unless B 条件式Bが適合しないときに限りAを実行する
+    Dir.mkdir("LogFiles") unless Dir.exist?("LogFiles")
+    FileUtils.touch("LogFiles/LatestLogFile.log") unless File.exist?("LogFiles/LatestLogFile.log")
+    write_log("Starting Script. Reading config.ini file...")
+
+    unless File.exist?("config.ini") then
+        config_file_not_found
+    end
+
+    iniList = []
+    #eachはオブジェクトに含まれている要素を順に取り出すメソッド
+    File.readlines("config.ini").each{|line|
+        line.chomp!
+        line.sub!(/;.*/,"DELETED")
+        iniList.push(line)
+    }
+    iniList.delete("DELETED")
+    iniList.push("") #セクション終了判定用
+
+    sections = get_section(iniList)
+
+    #puts sections.to_s
+    write_log("Reading General section...")
+    if sections[0][0] != "[General]" then
+        write_log("Description in an invalid format. Please set up the General section first.")
+        stop_script
+    end
+    geyserURL = sections[0][1].sub("GeyserSpigotURL=","")
+    write_log("GeyserSpigotURL = " + geyserURL)
+    sections.delete_at(0)
+
+    orderedAll = [] #jarパス→buildtoolリンク→スクリーン名→並列稼働スクリプト（複数ある場合はカンマ区切り）の順で二次元配列として格納する
+    for i in 0..sections.size - 1 do
+    
+        write_log("Reading section " + sections[i][0] + "...")
+        sections[0].delete_at(0)
+        ordered = get_section_order(sections[0])
+        write_log("ordered " + ordered.to_s)
+    
+        ordered.each{|key,value|
+            write_log("checking format of " + key + "...")
+            checking_format(key,value)
+        }
+        orderedAll.push(ordered)
+    end
+
+    #整形された設定項目がorderedAllに格納されている状態で処理を開始する
+    write_log("Server setup job started.")
+    orderedAll.each { |al|
+        check = %x( screen -ls | grep -c #{al['screenName']} ) 
+        write_log("check = " + check)
+        if check.to_i == 1 then
+            write_log("[ERROR] The server is already running.")
+            next
+        end
+        write_log("Starting server...") 
+        dir = File.dirname(al['serverJar']) #移動するためのディレクトリを取得
+        Dir::chdir(dir)
+        name = File.basename(al['serverJar']) #実行するためのファイル名を取得
+        result, err, status = Open3.capture3("screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui") #スクリーンとサーバー起動
+        Dir::chdir("../")
+        if err != "" then
+            write_log("[ERROR]  <#{al['screenName']}> Server start failed. ->" + err + " // " + status)
+            next
+        else
+            write_log("<#{al['screenName']}> Server start success. <" + status.to_s + "> ")
+        end
+    }
+    stop_script
+end
+
+#screenでサーバーを実行する事が出来るようになったが、floodgateもGeyserと同じように更新する仕組みが必要
+#geyserの更新処理やbuildtoolurlからの処理も必要
+
 def now_time
     return Time.now.strftime('%Y_%m_%d__%H:%M:%S')
 end
@@ -20,13 +96,9 @@ def stop_script
     exit
 end
 
-#A unless B 条件式Bが適合しないときに限りAを実行する
-Dir.mkdir("LogFiles") unless Dir.exist?("LogFiles")
-FileUtils.touch("LogFiles/LatestLogFile.log") unless File.exist?("LogFiles/LatestLogFile.log")
-write_log("Starting Script. Reading config.ini file...")
-
-unless File.exist?("config.ini") then
-    write_log("[ERROR]Can't find config.ini! Please setting config.ini and please run the script again.")
+#config.iniが存在しないときに呼び出してスクリプトを停止するメソッド
+def config_file_not_found
+    write_log("[ERROR] Can't find config.ini! Please setting config.ini and please run the script again.")
     FileUtils.touch("config.ini")
     File.open("config.ini", "a"){|f|
         f.puts "[General]\nGeyserSpigotURL=https://ci.opencollab.dev/job/GeyserMC/job/Geyser/job/master/lastSuccessfulBuild/artifact/bootstrap/spigot/target/Geyser-Spigot.jar\n\n"
@@ -36,57 +108,38 @@ unless File.exist?("config.ini") then
     stop_script
 end
 
-file = nil
-iniList = []
-#eachはオブジェクトに含まれている要素を順に取り出すメソッド
-File.readlines("config.ini").each{|line|
-    line.chomp!
-    line.sub!(/;.*/,"DELETED")
-    iniList.push(line)
-}
-iniList.delete("DELETED")
-iniList.push("") #セクション終了判定用
+#sectionの中身を取得して返すメソッド
+def get_section(iniList)
+    general = false
+    sectionFlag = false
+    secTemp = []
+    sections = []
 
-general = false
-sectionFlag = false
-secTemp = []
-sections = []
-
-for line in iniList do
-    if (line =~ /\[(.+)\]/) != nil then
-        sectionFlag = true
-        sectionName = line.match(/^\[(.*)\]/)[0]
-        secTemp.push(sectionName)
-    elsif sectionFlag then
-        if line == "" then
-            sectionFlag = false
-            sections.push(secTemp)
-            secTemp = []
-        else
-            secTemp.push(line)
+    iniList.each{|line|
+        if (line =~ /\[(.+)\]/) != nil then
+            sectionFlag = true
+            sectionName = line.match(/^\[(.*)\]/)[0]
+            secTemp.push(sectionName)
+        elsif sectionFlag then
+            if line == "" then
+                sectionFlag = false
+                sections.push(secTemp)
+                secTemp = []
+            else
+                secTemp.push(line)
+            end
         end
-    end
+    }
+    return sections
 end
-puts sections.to_s
-write_log("Reading General section...")
-if sections[0][0] != "[General]" then
-    write_log("Description in an invalid format. Please set up the General section first.")
-    stop_script
-end
-geyserURL = sections[0][1].sub("GeyserSpigotURL=","")
-sections[0] = []
 
-aligned = [] #jarパス→buildtoolリンク→スクリーン名→並列稼働スクリプト（複数ある場合はカンマ区切り）の順で二次元配列として格納する
-for i in 0..sections.size - 1 do
-    #ServerJar=./testServer/testServer.jar
-    #BuildToolURL=http://(buildTools URL)
-    #ScreenName=testServer
-    #ParallelScript=testA,testB or None
+#sectionの配列を受け取り順番に配列に格納して返すメソッド
+def get_section_order(s)
     serverJar = ""
     buildToolURL = ""
     screenName = ""
     parallelScript = ""
-    section[0].each {|sElement| #section内要素を一つずつsに引き渡してfor分のように繰り返し実行する
+    s.each { |sElement|
         case sElement
         when /^ServerJar=/ then
             serverJar = sElement.sub("ServerJar=","")
@@ -101,36 +154,32 @@ for i in 0..sections.size - 1 do
             parallelScript = sElement.sub("ParallelScript=","")
             write_log("ParallelScript Loaded.")
         else
-            write_log("[ERROR]Invalid setting item. ->" + sElement)
-            stop_script       
+            write_log("[ERROR] Invalid setting item. ->" + sElement)
+            stop_script
         end
     }
-    if serverJar == "" || buildToolURL == "" || screenName = "" || parallelScript = ""
-        write_log("[ERROR]The setting item could not be read.")
-        stop_script
-    else
-        alignedTemp = [serverJar, buildToolURL, screenName, parallelScript]
-        aligned.push(alignedTemp)
-    end
-    sections[0] = []
+    ordered = {"serverJar" => serverJar, "buildToolURL" => buildToolURL, "screenName" => screenName, "parallelScript" => parallelScript}
+    return ordered
 end
 
-#整形された設定項目がalignedに格納されている状態で処理を開始する
-write_log("Server setup job started.")
-aligned.each { |al|
-    check=`screen -ls | grep -c #{al[2]}` #シェルに引き渡す前にRubyのレベルで変数を展開する
-    if check then
-        write_log("[ERROR]The server is already running.")
-        next
+#入力値を受け取り、その値が正しいかどうかを判別し、異なる場合はスクリプトを停止するメソッド
+def checking_format(key,value)
+    if value == "" then
+        write_log("[ERROR] No " + key + " setting. (Don't value is not empty please.)")
+        stop_script
     end
-    write_log("Starting server...")
-    result, err, status = Open3.capture3("screen -AdmSU #{al[2]} java -Xms2G -Xmx2G -jar #{al[0]} nogui") #スクリーンとサーバー起動
-    if $? != 0 then
-        write_log("[ERROR] <#{al[2]}> Server start failed. ->" + err + " // " + status)
-        next
-    else
-        write_log("<#{al[2]}> Server start success.")
+    #keyにURLを含む場合、valueがhttp://かhttps://で始まってない場合をエラーとする
+    if key =~ /URL/ then
+        if value !~ /^https?:\/\// then
+            write_log("[ERROR] Invalid " + key + " setting. (Don't start with http:// or https://.)")
+            stop_script
+        end
     end
-}
+    #valueに空白を含む場合をエラーとする
+    if value =~ /\s/ then
+        write_log("[ERROR] Invalid " + key + " setting. ->" + value + " (Space is not allowed.)")
+        stop_script
+    end
+end
 
-stop_script
+main
