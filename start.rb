@@ -1,5 +1,6 @@
 # coding: utf-8
 require 'fileutils'
+require 'open3'
 
 def now_time
     return Time.now.strftime('%Y_%m_%d__%H:%M:%S')
@@ -67,11 +68,69 @@ for line in iniList do
     end
 end
 puts sections.to_s
-
 write_log("Reading General section...")
-if sections[0][0] != "[General]" do
+if sections[0][0] != "[General]" then
     write_log("Description in an invalid format. Please set up the General section first.")
     stop_script
-END
-sections[0][1]
+end
+geyserURL = sections[0][1].sub("GeyserSpigotURL=","")
+sections[0] = []
+
+aligned = [] #jarパス→buildtoolリンク→スクリーン名→並列稼働スクリプト（複数ある場合はカンマ区切り）の順で二次元配列として格納する
+for i in 0..sections.size - 1 do
+    #ServerJar=./testServer/testServer.jar
+    #BuildToolURL=http://(buildTools URL)
+    #ScreenName=testServer
+    #ParallelScript=testA,testB or None
+    serverJar = ""
+    buildToolURL = ""
+    screenName = ""
+    parallelScript = ""
+    section[0].each {|sElement| #section内要素を一つずつsに引き渡してfor分のように繰り返し実行する
+        case sElement
+        when /^ServerJar=/ then
+            serverJar = sElement.sub("ServerJar=","")
+            write_log("ServerJar Loaded.")
+        when /^BuildToolURL=/ then
+            buildToolURL = sElement.sub("BuildToolURL=","")
+            write_log("BuildToolURL Loaded.")
+        when /^ScreenName=/ then
+            screenName = sElement.sub("ScreenName=","")
+            write_log("ScreenName Loaded.")
+        when /^ParallelScript=/ then
+            parallelScript = sElement.sub("ParallelScript=","")
+            write_log("ParallelScript Loaded.")
+        else
+            write_log("[ERROR]Invalid setting item. ->" + sElement)
+            stop_script       
+        end
+    }
+    if serverJar == "" || buildToolURL == "" || screenName = "" || parallelScript = ""
+        write_log("[ERROR]The setting item could not be read.")
+        stop_script
+    else
+        alignedTemp = [serverJar, buildToolURL, screenName, parallelScript]
+        aligned.push(alignedTemp)
+    end
+    sections[0] = []
+end
+
+#整形された設定項目がalignedに格納されている状態で処理を開始する
+write_log("Server setup job started.")
+aligned.each { |al|
+    check=`screen -ls | grep -c #{al[2]}` #シェルに引き渡す前にRubyのレベルで変数を展開する
+    if check then
+        write_log("[ERROR]The server is already running.")
+        next
+    end
+    write_log("Starting server...")
+    result, err, status = Open3.capture3("screen -AdmSU #{al[2]} java -Xms2G -Xmx2G -jar #{al[0]} nogui") #スクリーンとサーバー起動
+    if $? != 0 then
+        write_log("[ERROR] <#{al[2]}> Server start failed. ->" + err + " // " + status)
+        next
+    else
+        write_log("<#{al[2]}> Server start success.")
+    end
+}
+
 stop_script
