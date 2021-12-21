@@ -31,8 +31,15 @@ def main
         write_log("Description in an invalid format. Please set up the General section first.")
         stop_script
     end
-    geyserURL = sections[0][1].sub("GeyserSpigotURL=","")
+    begin
+        geyserURL = sections[0][1].sub("GeyserSpigotURL=","")
+        floodgateURL = sections[0][2].sub("FloodgateURL=","")
+    rescue => exception
+        write_log("[ERROR] Can't read GeyserSpigotURL or FloodgateURL. Please set up the General section first.")
+        stop_script
+    end
     write_log("GeyserSpigotURL = " + geyserURL)
+    write_log("FloodgateURL = " + floodgateURL)
     sections.delete_at(0)
 
     orderedAll = [] #jarパス→buildtoolリンク→スクリーン名→並列稼働スクリプト（複数ある場合はカンマ区切り）の順で二次元配列として格納する
@@ -101,7 +108,7 @@ def config_file_not_found
     write_log("[ERROR] Can't find config.ini! Please setting config.ini and please run the script again.")
     FileUtils.touch("config.ini")
     File.open("config.ini", "a"){|f|
-        f.puts "[General]\nGeyserSpigotURL=https://ci.opencollab.dev/job/GeyserMC/job/Geyser/job/master/lastSuccessfulBuild/artifact/bootstrap/spigot/target/Geyser-Spigot.jar\n\n"
+        f.puts "[General]\nGeyserSpigotURL=https://ci.opencollab.dev/job/GeyserMC/job/Geyser/job/master/lastSuccessfulBuild/artifact/bootstrap/spigot/target/Geyser-Spigot.jar\nFloodgateURL=https://ci.opencollab.dev/job/GeyserMC/job/Floodgate/job/master/lastSuccessfulBuild/artifact/spigot/target/floodgate-spigot.jar\n\n"
         f.puts "[testServer]\nServerJar=./testServer/testServer.jar\nBuildToolURL=http://(buildTools URL)\nScreenName=testServer\nParallelScript=None,None\n"
         f.puts "; Be sure to insert a blank line or comment line at the end of the section.\n; セクションの最後に必ず空白行またはコメント行を挿入してください。"
     }
