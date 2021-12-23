@@ -203,7 +203,7 @@ end
 #ファイルをURLから取得し同階層に保存するメソッド
 def save_file(url, filename)
     write_log("Downloading " + url + " to " + filename + ".")
-    open(urlL) { |file|
+    open(url) { |file|
         open(filename, "w+b") { |out|
             out.write(file.read)
         }
