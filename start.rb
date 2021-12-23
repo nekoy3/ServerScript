@@ -1,4 +1,5 @@
 # coding: utf-8
+require 'benchmark'
 require 'fileutils'
 require 'open-uri'
 require 'open3'
@@ -14,7 +15,7 @@ def main
         config_file_not_found
     end
 
-    lines = get_ini_section("config.ini")
+    lines = get_ini_file("config.ini")
     sections = get_section(lines)
 
     #puts sections.to_s
@@ -36,7 +37,7 @@ def main
 
     section_hashes = [] #jarパス→buildtoolリンク→スクリーン名→並列稼働スクリプト（複数ある場合はカンマ区切り）の順でまとめたhashを配列として格納する
 
-    sections.size.times do
+    sections.size.times{ |i|
         write_log("Reading section " + sections[i][0] + "...")
         sections[0].delete_at(0)
         section_hash = get_section_hash(sections[0])
@@ -47,7 +48,7 @@ def main
             checking_format(key,value)
         }
         section_hashes.push(section_hash)
-    end
+    }
 
     #比較元のgeyserとfloodgateを取得しておく
     save_file(geyser_url, "geyser-spigot.jar")
@@ -57,7 +58,6 @@ def main
     write_log("Server setup job started.")
     section_hashes.each { |al|
         check = %x( screen -ls | grep -c #{al['screenName']} ) 
-        write_log("check = " + check)
         if check.to_i == 1 then
             write_log("[ERROR] The server is already running.")
             next
@@ -69,11 +69,14 @@ def main
             name = File.basename(al['serverJar']) #実行するためのファイル名を取得
             result, err, status = Open3.capture3("screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui") #スクリーンとサーバー起動
         end
-        if err != "" then
-            write_log("[ERROR]  <#{al['screenName']}> Server start failed. ->" + err + " // " + status)
+        #なんか起動できなくなっていたので確認する
+        if defined?(err)
+            write_log("[ERROR]  <#{al['screenName']}> Server start failed. ->" + err + " // " + status.to_s)
             next
-        else
+        elsif defined?(status)
             write_log("<#{al['screenName']}> Server start success. <" + status.to_s + "> ")
+        else
+            write_log("[ERROR]  <#{al['screenName']}> Server start failed.")
         end
     }
     stop_script
@@ -172,13 +175,15 @@ def get_section_hash(lines)
 end
 #eachはオブジェクトに含まれている要素を順に取り出すメソッド
 def get_ini_file(fname)
+    lines = []
     File.readlines(fname).each{ |line|
         line.sub!(/;.*/,"DELETED")
-        lines.push << line.chomp
+        lines << line.chomp
     }
     lines.delete("DELETED")
     lines.push("") #セクション終了判定用
     return lines
+end
 
 #入力値を受け取り、その値が正しいかどうかを判別し、異なる場合はスクリプトを停止するメソッド
 def checking_format(key,value)
@@ -202,12 +207,29 @@ end
 
 #ファイルをURLから取得し同階層に保存するメソッド
 def save_file(url, filename)
-    write_log("Downloading " + url + " to " + filename + ".")
-    open(url) { |file|
-        open(filename, "w+b") { |out|
-            out.write(file.read)
-        }
-    }
-    write_log("Downloaded " + url + " to " + filename + ".")
+    begin
+        write_log("Downloading " + filename + "...")
+        result = Benchmark.realtime do
+            URI.open(url) { |file|
+                open(filename, "w+b") { |out|
+                    out.write(file.read)
+                }
+            }
+        end
+        size = File.size(filename)
+        write_log("Downloaded " + filename + ". Size: " + (size/1024).to_s + " Kbytes. Time: " + result.round(2).to_s + " seconds.")
+    rescue Interrupt
+        write_log("[INFO] download skipped.")
+    end
 end
-main
+
+begin
+    main
+rescue Interrupt
+    write_log("[INFO] Interrupt signal received. Stopping script.")
+    stop_script
+#rescue => e
+#    write_log("[ERROR] Unknown error occurred. Stopping script.")
+#    write_log("detail -> " + e.message)
+#    stop_script
+end
