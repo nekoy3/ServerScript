@@ -14,17 +14,17 @@ def main
         config_file_not_found
     end
 
-    iniList = []
+    lines = []
     #eachはオブジェクトに含まれている要素を順に取り出すメソッド
     File.readlines("config.ini").each{|line|
         line.chomp!
         line.sub!(/;.*/,"DELETED")
-        iniList.push(line)
+        lines.push(line)
     }
-    iniList.delete("DELETED")
-    iniList.push("") #セクション終了判定用
+    lines.delete("DELETED")
+    lines.push("") #セクション終了判定用
 
-    sections = get_section(iniList)
+    sections = get_section(lines)
 
     #puts sections.to_s
     write_log("Reading General section...")
@@ -33,38 +33,38 @@ def main
         stop_script
     end
     begin
-        geyserURL = sections[0][1].sub("GeyserSpigotURL=","")
-        floodgateURL = sections[0][2].sub("FloodgateURL=","")
+        geyser_url = sections[0][1].sub("GeyserSpigotURL=","")
+        floodgate_url = sections[0][2].sub("FloodgateURL=","")
     rescue => exception
         write_log("[ERROR] Can't read GeyserSpigotURL or FloodgateURL. Please set up the General section first.")
         stop_script
     end
-    write_log("GeyserSpigotURL = " + geyserURL)
-    write_log("FloodgateURL = " + floodgateURL)
+    write_log("GeyserSpigotURL = " + geyser_url)
+    write_log("FloodgateURL = " + floodgate_url)
     sections.delete_at(0)
 
-    orderedAll = [] #jarパス→buildtoolリンク→スクリーン名→並列稼働スクリプト（複数ある場合はカンマ区切り）の順で二次元配列として格納する
-    for i in 0..sections.size - 1 do
-    
+    section_hashes = [] #jarパス→buildtoolリンク→スクリーン名→並列稼働スクリプト（複数ある場合はカンマ区切り）の順でまとめたhashを配列として格納する
+
+    sections.size.times do
         write_log("Reading section " + sections[i][0] + "...")
         sections[0].delete_at(0)
-        ordered = get_section_order(sections[0])
-        write_log("ordered " + ordered.to_s)
+        section_hash = get_section_hash(sections[0])
+        write_log("section_hash " + section_hash.to_s)
     
-        ordered.each{|key,value|
+        section_hash.each{|key,value|
             write_log("checking format of " + key + "...")
             checking_format(key,value)
         }
-        orderedAll.push(ordered)
+        section_hashes.push(section_hash)
     end
 
     #比較元のgeyserとfloodgateを取得しておく
-    save_file(geyserURL, "geyser-spigot.jar")
-    save_file(floodgateURL, "floodgate.jar")
+    save_file(geyser_url, "geyser-spigot.jar")
+    save_file(floodgate_url, "floodgate.jar")
 
-    #整形された設定項目がorderedAllに格納されている状態で処理を開始する
+    #整形された設定項目がsection_hashesに格納されている状態で処理を開始する
     write_log("Server setup job started.")
-    orderedAll.each { |al|
+    section_hashes.each { |al|
         check = %x( screen -ls | grep -c #{al['screenName']} ) 
         write_log("check = " + check)
         if check.to_i == 1 then
@@ -89,7 +89,7 @@ def main
 end
 
 #screenでサーバーを実行する事が出来るようになったが、floodgateもGeyserと同じように更新する仕組みが必要
-#geyserの更新処理やbuildtoolurlからの処理も必要
+#geyserの更新処理やbuildtool_urlからの処理も必要
 
 def now_time
     return Time.now.strftime('%Y_%m_%d__%H:%M:%S')
@@ -97,17 +97,17 @@ end
 
 def write_log(string)
     open('LogFiles/LatestLogFile.log', 'a'){|f|
-        logLine = "[" + now_time + "] " + string + "\n"
-        f.puts logLine
-        puts logLine unless ARGV[0] == "nocslog"
+        line = "[" + now_time + "] " + string + "\n"
+        f.puts line
+        puts line unless ARGV[0] == "nocslog"
     }
 end
 
 def stop_script
     write_log("Stopping script.")
     File.rename("./LogFiles/LatestLogFile.log","./LogFiles/" + now_time + ".log")
-    fileList = ["geyser-spigot.jar", "buildtool.jar", "floodgate.jar"]
-    fileList.each{ |file|
+    file_list = ["geyser-spigot.jar", "buildtool.jar", "floodgate.jar"]
+    file_list.each{ |file|
         File.delete(file) if File.exist?(file)
     }
     exit
@@ -126,58 +126,58 @@ def config_file_not_found
 end
 
 #sectionの中身を取得して返すメソッド
-def get_section(iniList)
+def get_section(lines)
     general = false
-    sectionFlag = false
-    secTemp = []
+    in_section_flag = false
+    section = []
     sections = []
 
-    iniList.each{|line|
+    lines.each{|line|
         if (line =~ /\[(.+)\]/) != nil then
-            sectionFlag = true
-            sectionName = line.match(/^\[(.*)\]/)[0]
-            secTemp.push(sectionName)
-        elsif sectionFlag then
+            in_section_flag = true
+            section_name = line.match(/^\[(.*)\]/)[0]
+            section.push(section_name)
+        elsif in_section_flag then
             if line == "" then
-                sectionFlag = false
-                sections.push(secTemp)
-                secTemp = []
+                in_section_flag = false
+                sections.push(section)
+                section = []
             else
-                secTemp.push(line)
+                section.push(line)
             end
         end
     }
     return sections
 end
 
-#sectionの配列を受け取り順番に配列に格納して返すメソッド
-def get_section_order(s)
+#sectionの配列を受け取り順番にhashに格納して返すメソッド
+def get_section_hash(lines)
     #nil比較か例外処理でこの初期化処理不要に出来る？
     serverJar = ""
-    buildToolURL = ""
+    buildtool_url = ""
     screenName = ""
-    parallelScript = ""
-    s.each { |sElement|
-        case sElement
+    parallel_script = ""
+    lines.each { |line|
+        case line
         when /^ServerJar=/ then
-            serverJar = sElement.sub("ServerJar=","")
+            serverJar = line.sub("ServerJar=","")
             write_log("ServerJar Loaded.")
         when /^BuildToolURL=/ then
-            buildToolURL = sElement.sub("BuildToolURL=","")
+            buildtool_url = line.sub("BuildToolURL=","")
             write_log("BuildToolURL Loaded.")
         when /^ScreenName=/ then
-            screenName = sElement.sub("ScreenName=","")
+            screenName = line.sub("ScreenName=","")
             write_log("ScreenName Loaded.")
         when /^ParallelScript=/ then
-            parallelScript = sElement.sub("ParallelScript=","")
+            parallel_script = line.sub("ParallelScript=","")
             write_log("ParallelScript Loaded.")
         else
-            write_log("[ERROR] Invalid setting item. ->" + sElement)
+            write_log("[ERROR] Invalid setting item. ->" + line)
             stop_script
         end
     }
-    ordered = {"serverJar" => serverJar, "buildToolURL" => buildToolURL, "screenName" => screenName, "parallelScript" => parallelScript} #Hash(辞書型)に格納
-    return ordered
+    section_hash = {"serverJar" => serverJar, "buildToolURL" => buildtool_url, "screenName" => screenName, "parallelScript" => parallel_script} #Hash(辞書型)に格納
+    return section_hash
 end
 
 #入力値を受け取り、その値が正しいかどうかを判別し、異なる場合はスクリプトを停止するメソッド
