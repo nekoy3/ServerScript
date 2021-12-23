@@ -1,5 +1,6 @@
 # coding: utf-8
 require 'fileutils'
+require 'open-uri'
 require 'open3'
 
 #メインメソッド
@@ -57,6 +58,10 @@ def main
         orderedAll.push(ordered)
     end
 
+    #比較元のgeyserとfloodgateを取得しておく
+    save_file(geyserURL, "geyser-spigot.jar")
+    save_file(floodgateURL, "floodgate.jar")
+
     #整形された設定項目がorderedAllに格納されている状態で処理を開始する
     write_log("Server setup job started.")
     orderedAll.each { |al|
@@ -67,11 +72,12 @@ def main
             next
         end
         write_log("Starting server...") 
+
         dir = File.dirname(al['serverJar']) #移動するためのディレクトリを取得
-        Dir::chdir(dir)
-        name = File.basename(al['serverJar']) #実行するためのファイル名を取得
-        result, err, status = Open3.capture3("screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui") #スクリーンとサーバー起動
-        Dir::chdir("../")
+        Dir::open(dir) do
+            name = File.basename(al['serverJar']) #実行するためのファイル名を取得
+            result, err, status = Open3.capture3("screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui") #スクリーンとサーバー起動
+        end
         if err != "" then
             write_log("[ERROR]  <#{al['screenName']}> Server start failed. ->" + err + " // " + status)
             next
@@ -100,6 +106,10 @@ end
 def stop_script
     write_log("Stopping script.")
     File.rename("./LogFiles/LatestLogFile.log","./LogFiles/" + now_time + ".log")
+    fileList = ["geyser-spigot.jar", "buildtool.jar", "floodgate.jar"]
+    fileList.each{ |file|
+        File.delete(file) if File.exist?(file)
+    }
     exit
 end
 
@@ -142,6 +152,7 @@ end
 
 #sectionの配列を受け取り順番に配列に格納して返すメソッド
 def get_section_order(s)
+    #nil比較か例外処理でこの初期化処理不要に出来る？
     serverJar = ""
     buildToolURL = ""
     screenName = ""
@@ -165,7 +176,7 @@ def get_section_order(s)
             stop_script
         end
     }
-    ordered = {"serverJar" => serverJar, "buildToolURL" => buildToolURL, "screenName" => screenName, "parallelScript" => parallelScript}
+    ordered = {"serverJar" => serverJar, "buildToolURL" => buildToolURL, "screenName" => screenName, "parallelScript" => parallelScript} #Hash(辞書型)に格納
     return ordered
 end
 
@@ -189,4 +200,14 @@ def checking_format(key,value)
     end
 end
 
+#ファイルをURLから取得し同階層に保存するメソッド
+def save_file(url, filename)
+    write_log("Downloading " + url + " to " + filename + ".")
+    open(urlL) { |file|
+        open(filename, "w+b") { |out|
+            out.write(file.read)
+        }
+    }
+    write_log("Downloaded " + url + " to " + filename + ".")
+end
 main
