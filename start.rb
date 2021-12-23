@@ -14,16 +14,7 @@ def main
         config_file_not_found
     end
 
-    lines = []
-    #eachはオブジェクトに含まれている要素を順に取り出すメソッド
-    File.readlines("config.ini").each{|line|
-        line.chomp!
-        line.sub!(/;.*/,"DELETED")
-        lines.push(line)
-    }
-    lines.delete("DELETED")
-    lines.push("") #セクション終了判定用
-
+    lines = get_ini_section("config.ini")
     sections = get_section(lines)
 
     #puts sections.to_s
@@ -179,6 +170,15 @@ def get_section_hash(lines)
     section_hash = {"serverJar" => serverJar, "buildToolURL" => buildtool_url, "screenName" => screenName, "parallelScript" => parallel_script} #Hash(辞書型)に格納
     return section_hash
 end
+#eachはオブジェクトに含まれている要素を順に取り出すメソッド
+def get_ini_file(fname)
+    File.readlines(fname).each{ |line|
+        line.sub!(/;.*/,"DELETED")
+        lines.push << line.chomp
+    }
+    lines.delete("DELETED")
+    lines.push("") #セクション終了判定用
+    return lines
 
 #入力値を受け取り、その値が正しいかどうかを判別し、異なる場合はスクリプトを停止するメソッド
 def checking_format(key,value)
