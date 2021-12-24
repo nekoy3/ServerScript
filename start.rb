@@ -65,18 +65,48 @@ def main
         write_log("Starting server...") 
 
         dir = File.dirname(al['serverJar']) #移動するためのディレクトリを取得
-        Dir::open(dir) do
-            name = File.basename(al['serverJar']) #実行するためのファイル名を取得
+        name = File.basename(al['serverJar']) #実行するためのファイル名を取得
+        Dir.chdir(dir) {
+            #puts "screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui"
             result, err, status = Open3.capture3("screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui") #スクリーンとサーバー起動
-        end
-        #なんか起動できなくなっていたので確認する
-        if defined?(err)
-            write_log("[ERROR]  <#{al['screenName']}> Server start failed. ->" + err + " // " + status.to_s)
+        }
+
+        if defined? err
+            write_log("[ERROR]  <#{al['screenName']}> Server start failed. ->" + err)
             next
-        elsif defined?(status)
-            write_log("<#{al['screenName']}> Server start success. <" + status.to_s + "> ")
         else
-            write_log("[ERROR]  <#{al['screenName']}> Server start failed.")
+            write_log("[INFO]  <#{al['screenName']}> Server is starting...")
+            time = ""
+            loop {
+                b, time, err = check_log_and_startup_done(dir)
+                if err then
+                    err = nil
+                    write_log("[ERROR]  <#{al['screenName']}> Server start failed. remove session.lock and retrying...")
+                    Dir.glob("**/*").each{ |fn|
+                        if fn =~ /.*session.lock$/ then
+                            File.delete(fn)
+                        end
+                    }
+                    sleep(3)
+                    File.delete(dir + "/logs/latest.log")
+                    result, err, status = Open3.capture3("screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui")
+                    loop{ 
+                        b, time, err = check_log_and_startup_done(dir)
+                        if err
+                            write_log("[ERROR]  <#{al['screenName']}> Server start failed. ")
+                            break
+                        elsif b then
+                            write_log("[INFO]  <#{al['screenName']}> Server start success. " + time)
+                            break
+                        end
+                    }
+                    break
+                
+                elsif b then
+                    write_log("[INFO]  <#{al['screenName']}> Server start success. " + time)
+                    break
+                end
+            }
         end
     }
     stop_script
@@ -121,7 +151,6 @@ end
 
 #sectionの中身を取得して返すメソッド
 def get_section(lines)
-    general = false
     in_section_flag = false
     section = []
     sections = []
@@ -147,20 +176,20 @@ end
 #sectionの配列を受け取り順番にhashに格納して返すメソッド
 def get_section_hash(lines)
     #nil比較か例外処理でこの初期化処理不要に出来る？
-    serverJar = ""
+    server_jar = ""
     buildtool_url = ""
-    screenName = ""
+    screen_nane = ""
     parallel_script = ""
     lines.each { |line|
         case line
         when /^ServerJar=/ then
-            serverJar = line.sub("ServerJar=","")
+            server_jar = line.sub("ServerJar=","")
             write_log("ServerJar Loaded.")
         when /^BuildToolURL=/ then
             buildtool_url = line.sub("BuildToolURL=","")
             write_log("BuildToolURL Loaded.")
         when /^ScreenName=/ then
-            screenName = line.sub("ScreenName=","")
+            screen_nane = line.sub("ScreenName=","")
             write_log("ScreenName Loaded.")
         when /^ParallelScript=/ then
             parallel_script = line.sub("ParallelScript=","")
@@ -170,7 +199,7 @@ def get_section_hash(lines)
             stop_script
         end
     }
-    section_hash = {"serverJar" => serverJar, "buildToolURL" => buildtool_url, "screenName" => screenName, "parallelScript" => parallel_script} #Hash(辞書型)に格納
+    section_hash = {"serverJar" => server_jar, "buildToolURL" => buildtool_url, "screenName" => screen_nane, "parallelScript" => parallel_script} #Hash(辞書型)に格納
     return section_hash
 end
 #eachはオブジェクトに含まれている要素を順に取り出すメソッド
@@ -178,7 +207,7 @@ def get_ini_file(fname)
     lines = []
     File.readlines(fname).each{ |line|
         line.sub!(/;.*/,"DELETED")
-        lines << line.chomp
+        lines << line.chomp #lines.push(line.chomp)と同じ
     }
     lines.delete("DELETED")
     lines.push("") #セクション終了判定用
@@ -221,6 +250,27 @@ def save_file(url, filename)
     rescue Interrupt
         write_log("[INFO] download skipped.")
     end
+end
+
+#ログディレクトリ(logs)のlatest.logを監視しDoneを検出したらtrueを返すメソッド
+def check_log_and_startup_done(dir)
+    latest_log = dir + "/logs/latest.log"
+    sleep(1)
+    if File.exist?(latest_log) then
+        File.open(latest_log, "r") { |f|
+            f.each_line { |line|
+                if line =~ /Done \(.{7}\)/ then
+                    return true, line.match(/\(.{7}\)/)[0], nil
+                elsif line =~ /Stopping server/
+                    return true, nil, true
+                end
+            }
+        }
+    else
+        write_log("[ERROR] No latest.log. (No logs directory or no latest.log.)")
+        stop_script
+    end
+    return false, nil, nil
 end
 
 begin
