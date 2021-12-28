@@ -3,6 +3,7 @@ require 'benchmark'
 require 'fileutils'
 require 'open-uri'
 require 'open3'
+require 'zip'
 
 #メインメソッド
 def main
@@ -27,14 +28,19 @@ def main
     begin
         geyser_url = sections[0][1].sub("GeyserSpigotURL=","")
         floodgate_url = sections[0][2].sub("FloodgateURL=","")
+        viaversion_url = sections[0][3].sub("ViaVersionURL=","")
+        viabackwards_url = sections[0][4].sub("ViaBackwardsURL=","")
+        auto_update_mode = sections[0][5].sub("AutoUpdateMode=","")
     rescue => exception
-        write_log("[ERROR] Can't read GeyserSpigotURL or FloodgateURL. Please set up the General section first.")
+        write_log("[ERROR] Can't read GeyserSpigotURL or FloodgateURL or AutoUpdateMode. Please set up the General section first.")
         stop_script
     end
     write_log("GeyserSpigotURL = " + geyser_url)
     write_log("FloodgateURL = " + floodgate_url)
-    sections.delete_at(0)
-
+    write_log("ViaVersionURL = " + viaversion_url)
+    write_log("ViaBackwardsURL = " + viabackwards_url)
+    write_log("AutoUpdateMode = " + auto_update_mode)
+    sections.delete_at(0)                    
     section_hashes = [] #jarパス→buildtoolリンク→スクリーン名→並列稼働スクリプト（複数ある場合はカンマ区切り）の順でまとめたhashを配列として格納する
 
     sections.size.times{ |i|
@@ -51,65 +57,57 @@ def main
     }
 
     #比較元のgeyserとfloodgateを取得しておく
-    save_file(geyser_url, "geyser-spigot.jar")
-    save_file(floodgate_url, "floodgate.jar")
+    save_file(geyser_url, "geyser-spigot.jar", auto_update_mode)
+    save_file(floodgate_url, "floodgate.jar", auto_update_mode)
+    save_file(viaversion_url, "ViaVersion.jar", auto_update_mode)
+    save_file(viabackwards_url, "ViaBackwards.jar", auto_update_mode)
 
     #整形された設定項目がsection_hashesに格納されている状態で処理を開始する
     write_log("Server setup job started.")
     section_hashes.each { |al|
+        write_log("Running server setup <" + al["serverJar"] + "> ...")
         check = %x( screen -ls | grep -c #{al['screenName']} ) 
         if check.to_i == 1 then
             write_log("[ERROR] The server is already running.")
             next
         end
-        write_log("Starting server...") 
+
+        #buildtoolをダウンロードする
+        write_log("Download and checking BuildTools.jar...")
+        save_file(al['buildToolURL'], "BuildTools.jar", auto_update_mode)
+        #BuildTools.jarをjavaコマンドでシェルからビルドする
+        write_log("Building BuildTools.jar...")
+        jarname = File.basename(al['serverJar'])
+        buildtool_build(jarname, auto_update_mode) #BuildTools.jarをビルドする buildtool_built/(server_jar).jar
 
         dir = File.dirname(al['serverJar']) #移動するためのディレクトリを取得
         name = File.basename(al['serverJar']) #実行するためのファイル名を取得
+
+        #geyser,floodgate,ビルドしたserverのjarをアーカイブに移動し、新しく取得したjarを保存するメソッド
+        if auto_update_mode
+            write_log("Moving server jar to archive and new jar files...")
+            move_jar(dir, name, now_time)
+        end
+
+        #サーバー起動フェーズ
+        write_log("<" + al['screenName'] + "> Starting server...")
         Dir.chdir(dir) {
-            #puts "screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui"
             result, err, status = Open3.capture3("screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui") #スクリーンとサーバー起動
         }
 
-        if defined? err
-            write_log("[ERROR]  <#{al['screenName']}> Server start failed. ->" + err)
-            next
-        else
-            write_log("[INFO]  <#{al['screenName']}> Server is starting...")
-            time = ""
-            loop {
-                b, time, err = check_log_and_startup_done(dir)
-                if err then
-                    err = nil
-                    write_log("[ERROR]  <#{al['screenName']}> Server start failed. remove session.lock and retrying...")
-                    Dir.glob("**/*").each{ |fn|
-                        if fn =~ /.*session.lock$/ then
-                            File.delete(fn)
-                        end
-                    }
-                    sleep(3)
-                    File.delete(dir + "/logs/latest.log")
-                    result, err, status = Open3.capture3("screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui")
-                    loop{ 
-                        b, time, err = check_log_and_startup_done(dir)
-                        if err
-                            write_log("[ERROR]  <#{al['screenName']}> Server start failed. ")
-                            break
-                        elsif b then
-                            write_log("[INFO]  <#{al['screenName']}> Server start success. " + time)
-                            break
-                        end
-                    }
-                    break
-                
-                elsif b then
-                    write_log("[INFO]  <#{al['screenName']}> Server start success. " + time)
-                    break
-                end
-            }
-        end
+        loop {
+            b, time, err = check_log_and_startup_done(dir)
+            if err
+                write_log("[ERROR]  <#{al['screenName']}> Server start failed.")
+                #リトライメソッドを呼び出す
+                retry_start_server(al, name)
+                break
+            elsif b
+                write_log("<#{al['screenName']}> Server start success. " + time)
+                break
+            end
+        }
     }
-    stop_script
 end
 
 #screenでサーバーを実行する事が出来るようになったが、floodgateもGeyserと同じように更新する仕組みが必要
@@ -130,7 +128,7 @@ end
 def stop_script
     write_log("Stopping script.")
     File.rename("./LogFiles/LatestLogFile.log","./LogFiles/" + now_time + ".log")
-    file_list = ["geyser-spigot.jar", "buildtool.jar", "floodgate.jar"]
+    file_list = ["geyser-spigot.jar", "BuildTools.jar", "floodgate.jar"]
     file_list.each{ |file|
         File.delete(file) if File.exist?(file)
     }
@@ -142,8 +140,8 @@ def config_file_not_found
     write_log("[ERROR] Can't find config.ini! Please setting config.ini and please run the script again.")
     FileUtils.touch("config.ini")
     File.open("config.ini", "a"){|f|
-        f.puts "[General]\nGeyserSpigotURL=https://ci.opencollab.dev/job/GeyserMC/job/Geyser/job/master/lastSuccessfulBuild/artifact/bootstrap/spigot/target/Geyser-Spigot.jar\nFloodgateURL=https://ci.opencollab.dev/job/GeyserMC/job/Floodgate/job/master/lastSuccessfulBuild/artifact/spigot/target/floodgate-spigot.jar\n\n"
-        f.puts "[testServer]\nServerJar=./testServer/testServer.jar\nBuildToolURL=http://(buildTools URL)\nScreenName=testServer\nParallelScript=None,None\n"
+        f.puts "[General]\nGeyserSpigotURL=https://ci.opencollab.dev/job/GeyserMC/job/Geyser/job/master/lastSuccessfulBuild/artifact/bootstrap/spigot/target/Geyser-Spigot.jar\nFloodgateURL=https://ci.opencollab.dev/job/GeyserMC/job/Floodgate/job/master/lastSuccessfulBuild/artifact/spigot/target/floodgate-spigot.jar\nAutoUpdateMode=True\n\n"
+        f.puts "[testServer]\nServerJar=./testServer/testServer.jar\nBuildToolURL=http://(buildTools URL)\nScreenName=testServer\nParallelScript=None,None\nServerType=Spigot\n"
         f.puts "; Be sure to insert a blank line or comment line at the end of the section.\n; セクションの最後に必ず空白行またはコメント行を挿入してください。"
     }
     stop_script
@@ -175,21 +173,17 @@ end
 
 #sectionの配列を受け取り順番にhashに格納して返すメソッド
 def get_section_hash(lines)
-    #nil比較か例外処理でこの初期化処理不要に出来る？
-    server_jar = ""
-    buildtool_url = ""
-    screen_nane = ""
-    parallel_script = ""
+    server_jar, buildtool_url, screen_name, parallel_script = nil
     lines.each { |line|
         case line
         when /^ServerJar=/ then
             server_jar = line.sub("ServerJar=","")
-            write_log("ServerJar Loaded.")
+            write_log("ServerJar Loaded. -> " + server_jar)
         when /^BuildToolURL=/ then
             buildtool_url = line.sub("BuildToolURL=","")
             write_log("BuildToolURL Loaded.")
         when /^ScreenName=/ then
-            screen_nane = line.sub("ScreenName=","")
+            screen_name = line.sub("ScreenName=","")
             write_log("ScreenName Loaded.")
         when /^ParallelScript=/ then
             parallel_script = line.sub("ParallelScript=","")
@@ -199,9 +193,15 @@ def get_section_hash(lines)
             stop_script
         end
     }
-    section_hash = {"serverJar" => server_jar, "buildToolURL" => buildtool_url, "screenName" => screen_nane, "parallelScript" => parallel_script} #Hash(辞書型)に格納
+    begin
+        section_hash = {"serverJar" => server_jar, "buildToolURL" => buildtool_url, "screenName" => screen_name, "parallelScript" => parallel_script} #Hash(辞書型)に格納
+    rescue => e
+        write_log("[ERROR] Can't get section hash. ->" + e.to_s)
+        stop_script
+    end
     return section_hash
 end
+
 #eachはオブジェクトに含まれている要素を順に取り出すメソッド
 def get_ini_file(fname)
     lines = []
@@ -235,14 +235,24 @@ def checking_format(key,value)
 end
 
 #ファイルをURLから取得し同階層に保存するメソッド
-def save_file(url, filename)
+def save_file(url, filename, mode)
+    if mode != "True" then
+        write_log("[INFO] AutoUpdateMode is False. Skip downloading.")
+        return
+    end
     begin
         write_log("Downloading " + filename + "...")
         result = Benchmark.realtime do
             URI.open(url) { |file|
-                open(filename, "w+b") { |out|
-                    out.write(file.read)
-                }
+                if url =~ /\.zip$/ then
+                    File.open("archive.zip", "wb") { |out|
+                        out.write(file.read)
+                    }
+                else
+                    File.open(filename, "w+b") { |out|
+                        out.write(file.read)
+                    }
+                end
             }
         end
         size = File.size(filename)
@@ -250,9 +260,12 @@ def save_file(url, filename)
     rescue Interrupt
         write_log("[INFO] download skipped.")
     end
+    if url =~ /\.zip$/ then
+        unzip_jar(filename)
+    end
 end
 
-#ログディレクトリ(logs)のlatest.logを監視しDoneを検出したらtrueを返すメソッド
+#ログディレクトリ(logs)のlatest.logを監視しDoneを検出したらtrueを返すメソッド。二つ目の帰り値は起動時間文字列、三つ目の帰り値は異常停止時にtrueを返す
 def check_log_and_startup_done(dir)
     latest_log = dir + "/logs/latest.log"
     sleep(1)
@@ -267,10 +280,96 @@ def check_log_and_startup_done(dir)
             }
         }
     else
-        write_log("[ERROR] No latest.log. (No logs directory or no latest.log.)")
+        write_log("[ERROR] No latest.log. (No logs directory or no latest.log.) -> " + latest_log)
         stop_script
     end
     return false, nil, nil
+end
+
+#BuildTools.jarを新規ディレクトリ内に移動してjavaコマンドでシェルからビルドしてjarファイル以外削除するメソッド
+def buildtool_build(jarname, mode)
+    FileUtils.rm_rf("./buildtool_built") if Dir.exist?("./buildtool_built")
+    if mode != "True" then
+        write_log("AutoUpdateMode is False. Skip building.")
+        return
+    end
+
+    begin
+        result = Benchmark.realtime do
+            Dir.mkdir("./buildtool_built") unless Dir.exist?("./buildtool_built")
+            Dir.chdir("./buildtool_built") do
+                system("cp ../BuildTools.jar ./")
+                system("rm ../BuildTools.jar")
+                s, err, status = Open3.capture3("java -jar BuildTools.jar")
+                File.delete("BuildTools.jar")
+                system("ls | grep -v -E 'jar$' | xargs rm -r")
+                system("rename 's/.*/" + jarname + "/' *.jar")
+            end
+        end
+        write_log("BuildTools.jar built. Time: " + result.round(2).to_s + " seconds.")
+        begin
+            write_log("file -> " + Dir.glob("./bundler/versions/*.jar")[0].to_s)
+        rescue
+            return
+        end
+        #FileUtils.rm_rf("./bundler") if Dir.exist?("./bundler")
+
+    rescue Interrupt
+        write_log("[INFO] BuildTools.jar build skipped.")
+    end
+end
+
+#サーバーの起動に失敗した場合session.lockを削除しリトライする
+def retry_start_server(al, name)
+    write_log("[ERROR]  <#{al['screenName']}> Server start failed. remove session.lock and retrying...")
+    Dir.glob("**/*").each{ |fn|
+        if fn =~ /.*session.lock$/ then
+            File.delete(fn)
+        end
+    }
+    sleep(3)
+    File.delete(dir + "/logs/latest.log")
+    result, err, status = Open3.capture3("screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui")
+    loop{ 
+        b, time, err = check_log_and_startup_done(dir)
+        if err
+            write_log("[ERROR]  <#{al['screenName']}> Server start failed. ")
+            break
+        elsif b
+            write_log("<#{al['screenName']}> Server start success. " + time)
+            break
+        end
+    }
+end
+
+#jarファイルを定位置に移動し、バックアップも取得するメソッド
+def move_jar(dir, name, now_time)
+    #既存のgeyser,floodgate,jarnameをbackup_jar/日付.gzアーカイブに移動する
+    write_log("Moving geyser-spigot.jar, floodgate.jar, " + name + ".jar to backup_jar/...")
+    FileUtils.mv("./plugins/geyser-spigot.jar", dir + "/backup_jar/" + now_time + ".gz") if File.exist?("./plugins/geyser-spigot.jar")
+    FileUtils.mv("./plugins/floodgate.jar", dir + "/backup_jar/" + now_time + ".gz") if File.exist?("./plugins/floodgate.jar")
+    FileUtils.mv("./plugins/ViaVersion.jar", dir + "/backup_jar/" + now_time + ".gz") if File.exist?("./plugins/ViaVersion.jar")
+    FileUtils.mv("./plugins/ViaBackwards.jar", dir + "/backup_jar/" + now_time + ".gz") if File.exist?("./plugins/ViaBackwards.jar")
+    FileUtils.mv(name + ".jar", "backup_jar/" + dir + "/" + now_time + ".gz") if File.exist?(name + ".jar")
+
+    #カレントディレクトリのgeyser,floodgate,./buildtool_built/nameをcopyする
+    write_log("Moving geyser-spigot.jar, floodgate.jar, " + name + ".jar to " + dir + "/...")
+    FileUtils.cp("./geyser-spigot.jar", dir + "/plugins/geyser-spigot.jar")
+    FileUtils.cp("./floodgate.jar", dir + "/plugins/floodgate.jar")
+    FileUtils.cp("./ViaVersion.jar", dir + "/plugins/ViaVersion.jar")
+    FileUtils.cp("./ViaBackwards.jar", dir + "/plugins/ViaBackwards.jar")
+    FileUtils.mv("./buildtool_built/" + name, dir + "/" + name)
+end
+
+#zipファイルを解凍し中身をカレントディレクトリに展開するメソッド ※archive.zipであること viaversionの構成に準拠　必要であれば別途メソッドを用意する必要がある
+def unzip_jar(filename)
+    write_log("Unzipping archive.zip...")
+    system("unzip -o archive.zip")
+    Dir.chdir("./archive/build/libs/") {
+        system("rename 's/.*/" + filename + "/' *.jar")
+    }
+    FileUtils.mv("./archive/build/libs/" + filename, "./")
+    FileUtils.rm_rf("./archive.zip")
 end
 
 begin
