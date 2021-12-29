@@ -7,6 +7,9 @@ require 'zip'
 
 #メインメソッド
 def main
+    #プラグインとbuildtoolが一度でもダウンロード失敗すればFalseにして、以降のダウンロードとビルドをスキップする
+    download_done = TRUE
+
     #A unless B 条件式Bが適合しないときに限りAを実行する
     Dir.mkdir("LogFiles") unless Dir.exist?("LogFiles")
     FileUtils.touch("LogFiles/LatestLogFile.log") unless File.exist?("LogFiles/LatestLogFile.log")
@@ -25,21 +28,26 @@ def main
         write_log("Description in an invalid format. Please set up the General section first.")
         stop_script
     end
+
+    plugin_list = ["geyser-spigot.jar", "floodgate.jar", "ViaVersion.jar", "ViaBackwards.jar"]
+    ini_s = ["GeyserSpigotURL=", "FloodgateURL=", "ViaVersionURL=", "ViaBackwardsURL="]
+    plugin_hash = {}
+    
     begin
-        geyser_url = sections[0][1].sub("GeyserSpigotURL=","")
-        floodgate_url = sections[0][2].sub("FloodgateURL=","")
-        viaversion_url = sections[0][3].sub("ViaVersionURL=","")
-        viabackwards_url = sections[0][4].sub("ViaBackwardsURL=","")
+        (plugin_list.count).times { |p|
+            plugin_hash[plugin_list[p]] = sections[0][p+1].sub(ini_s[p],"")
+        }
         auto_update_mode = sections[0][5].sub("AutoUpdateMode=","")
     rescue => exception
         write_log("[ERROR] Can't read GeyserSpigotURL or FloodgateURL or AutoUpdateMode. Please set up the General section first.")
         stop_script
     end
-    write_log("GeyserSpigotURL = " + geyser_url)
-    write_log("FloodgateURL = " + floodgate_url)
-    write_log("ViaVersionURL = " + viaversion_url)
-    write_log("ViaBackwardsURL = " + viabackwards_url)
+
+    plugin_hash.each{|n, u|
+        write_log(n + " : " + u)
+    }
     write_log("AutoUpdateMode = " + auto_update_mode)
+    
     sections.delete_at(0)                    
     section_hashes = [] #jarパス→buildtoolリンク→スクリーン名→並列稼働スクリプト（複数ある場合はカンマ区切り）の順でまとめたhashを配列として格納する
 
@@ -56,11 +64,15 @@ def main
         section_hashes.push(section_hash)
     }
 
-    #比較元のgeyserとfloodgateを取得しておく
-    save_file(geyser_url, "geyser-spigot.jar", auto_update_mode)
-    save_file(floodgate_url, "floodgate.jar", auto_update_mode)
-    save_file(viaversion_url, "ViaVersion.jar", auto_update_mode)
-    save_file(viabackwards_url, "ViaBackwards.jar", auto_update_mode)
+    #更新するためのプラグイン群を保存する
+    write_log("Saving plugins to update...")
+    begin
+        plugin_hash.each{ |key,value|
+            save_file(value, key, auto_update_mode)
+        }
+    rescue Interrupt
+        write_log("Skipped saving plugins to update.")
+    end
 
     #整形された設定項目がsection_hashesに格納されている状態で処理を開始する
     write_log("Server setup job started.")
@@ -108,6 +120,7 @@ def main
             end
         }
     }
+    stop_script
 end
 
 #screenでサーバーを実行する事が出来るようになったが、floodgateもGeyserと同じように更新する仕組みが必要
@@ -128,10 +141,11 @@ end
 def stop_script
     write_log("Stopping script.")
     File.rename("./LogFiles/LatestLogFile.log","./LogFiles/" + now_time + ".log")
-    file_list = ["geyser-spigot.jar", "BuildTools.jar", "floodgate.jar"]
+    file_list = ["geyser-spigot.jar", "floodgate.jar", "ViaVersion.jar", "ViaBackwards.jar"]
     file_list.each{ |file|
         File.delete(file) if File.exist?(file)
     }
+    FileUtils.rm_r("buildtool_built") if File.exist?("buildtool_built")
     exit
 end
 
@@ -255,7 +269,8 @@ def save_file(url, filename, mode)
                 end
             }
         end
-        size = File.size(filename)
+        size = File.size(filename) if File.exist?(filename)
+        size = File.size("archive.zip") if File.exist?("archive.zip")
         write_log("Downloaded " + filename + ". Size: " + (size/1024).to_s + " Kbytes. Time: " + result.round(2).to_s + " seconds.")
     rescue Interrupt
         write_log("[INFO] download skipped.")
@@ -268,7 +283,7 @@ end
 #ログディレクトリ(logs)のlatest.logを監視しDoneを検出したらtrueを返すメソッド。二つ目の帰り値は起動時間文字列、三つ目の帰り値は異常停止時にtrueを返す
 def check_log_and_startup_done(dir)
     latest_log = dir + "/logs/latest.log"
-    sleep(1)
+    sleep(5)
     if File.exist?(latest_log) then
         File.open(latest_log, "r") { |f|
             f.each_line { |line|
@@ -345,19 +360,41 @@ end
 #jarファイルを定位置に移動し、バックアップも取得するメソッド
 def move_jar(dir, name, now_time)
     #既存のgeyser,floodgate,jarnameをbackup_jar/日付.gzアーカイブに移動する
-    write_log("Moving geyser-spigot.jar, floodgate.jar, " + name + ".jar to backup_jar/...")
-    FileUtils.mv("./plugins/geyser-spigot.jar", dir + "/backup_jar/" + now_time + ".gz") if File.exist?("./plugins/geyser-spigot.jar")
-    FileUtils.mv("./plugins/floodgate.jar", dir + "/backup_jar/" + now_time + ".gz") if File.exist?("./plugins/floodgate.jar")
-    FileUtils.mv("./plugins/ViaVersion.jar", dir + "/backup_jar/" + now_time + ".gz") if File.exist?("./plugins/ViaVersion.jar")
-    FileUtils.mv("./plugins/ViaBackwards.jar", dir + "/backup_jar/" + now_time + ".gz") if File.exist?("./plugins/ViaBackwards.jar")
-    FileUtils.mv(name + ".jar", "backup_jar/" + dir + "/" + now_time + ".gz") if File.exist?(name + ".jar")
+    write_log("Moving plugins to backup_jar/...")
+    #dir + "/backup_jar/" + name + "." + nowtime ディレクトリを作成
+    bkjar_dir = dir + "/backup_jar/" #バックアップディレクトリ
+    bk_file = name + "_" + now_time + ".zip" #バックアップディレクトリに保存するzipファイル
+    Dir.mkdir(bkjar_dir) unless Dir.exist?(bkjar_dir)
+    Dir.chdir(bkjar_dir) do
+        Dir.mkdir("temp") unless Dir.exist?("temp")
+    end
+    files = ["geyser-spigot.jar", "floodgate.jar", "ViaVersion.jar", "ViaBackwards.jar"]
+    files.each{ |f|
+        if File.exist?(dir + "/plugins/" + f ) then
+            FileUtils.mv(dir + "/plugins/" + f, bkjar_dir + "temp" )
+            write_log(dir + "/plugins/" + f + " moved to " + bkjar_dir + "temp")
+        else
+            write_log(dir + "/plugins/" + f + " not found.")
+        end
+    }
+    FileUtils.mv(name, bkjar_dir + "temp") if File.exist?(name)
+
+    #"temp"ディレクトリをzipアーカイブ(bk_file)化してbkjar_dirに移動する
+    write_log("Compressing backup_jar/...")
+    Zip::File.open(bkjar_dir + bk_file, Zip::File::CREATE) do |zipfile|
+        Dir.glob(bkjar_dir + "temp/*").each do |file|
+            zipfile.add(File.basename(file), file)
+            write_log(file + " added to " + bkjar_dir + bk_file)
+        end
+    end
+    FileUtils.rm_rf(bkjar_dir + "temp")
+    write_log("Removed " + bkjar_dir + "temp")
 
     #カレントディレクトリのgeyser,floodgate,./buildtool_built/nameをcopyする
-    write_log("Moving geyser-spigot.jar, floodgate.jar, " + name + ".jar to " + dir + "/...")
-    FileUtils.cp("./geyser-spigot.jar", dir + "/plugins/geyser-spigot.jar")
-    FileUtils.cp("./floodgate.jar", dir + "/plugins/floodgate.jar")
-    FileUtils.cp("./ViaVersion.jar", dir + "/plugins/ViaVersion.jar")
-    FileUtils.cp("./ViaBackwards.jar", dir + "/plugins/ViaBackwards.jar")
+    write_log("Moving plugins to " + dir + "/...")
+    files.each{ |f|
+        FileUtils.cp("./" + f, dir + "/plugins/" + f )
+    }
     FileUtils.mv("./buildtool_built/" + name, dir + "/" + name)
 end
 
