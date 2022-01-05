@@ -5,10 +5,10 @@ require 'open-uri'
 require 'open3'
 require 'zip'
 
+$download_continue_flug = true
 #メインメソッド
 def main
     #プラグインとbuildtoolが一度でもダウンロード失敗すればFalseにして、以降のダウンロードとビルドをスキップする
-    download_done = TRUE
 
     #A unless B 条件式Bが適合しないときに限りAを実行する
     Dir.mkdir("LogFiles") unless Dir.exist?("LogFiles")
@@ -66,13 +66,9 @@ def main
 
     #更新するためのプラグイン群を保存する
     write_log("Saving plugins to update...")
-    begin
-        plugin_hash.each{ |key,value|
-            save_file(value, key, auto_update_mode)
-        }
-    rescue Interrupt
-        write_log("Skipped saving plugins to update.")
-    end
+    plugin_hash.each{ |key,value|
+        save_file(value, key, auto_update_mode)
+    }
 
     #整形された設定項目がsection_hashesに格納されている状態で処理を開始する
     write_log("Server setup job started.")
@@ -87,16 +83,20 @@ def main
         #buildtoolをダウンロードする
         write_log("Download and checking BuildTools.jar...")
         save_file(al['buildToolURL'], "BuildTools.jar", auto_update_mode)
-        #BuildTools.jarをjavaコマンドでシェルからビルドする
-        write_log("Building BuildTools.jar...")
-        jarname = File.basename(al['serverJar'])
-        buildtool_build(jarname, auto_update_mode) #BuildTools.jarをビルドする buildtool_built/(server_jar).jar
+        if $download_continue_flug then
+            #BuildTools.jarをjavaコマンドでシェルからビルドする
+            write_log("Building BuildTools.jar...")
+            jarname = File.basename(al['serverJar'])
+            buildtool_build(jarname, auto_update_mode) #BuildTools.jarをビルドする buildtool_built/(server_jar).jar
+        else
+            write_log("Buildtool build skipped.")
+        end
 
         dir = File.dirname(al['serverJar']) #移動するためのディレクトリを取得
         name = File.basename(al['serverJar']) #実行するためのファイル名を取得
 
         #geyser,floodgate,ビルドしたserverのjarをアーカイブに移動し、新しく取得したjarを保存するメソッド
-        if auto_update_mode
+        if auto_update_mode && $download_continue_flug
             write_log("Moving server jar to archive and new jar files...")
             move_jar(dir, name, now_time)
         end
@@ -253,6 +253,9 @@ def save_file(url, filename, mode)
     if mode != "True" then
         write_log("[INFO] AutoUpdateMode is False. Skip downloading.")
         return
+    elsif $download_continue_flug == false then
+        write_log("[INFO] Downloading is skipped.")
+        return
     end
     begin
         write_log("Downloading " + filename + "...")
@@ -274,6 +277,7 @@ def save_file(url, filename, mode)
         write_log("Downloaded " + filename + ". Size: " + (size/1024).to_s + " Kbytes. Time: " + result.round(2).to_s + " seconds.")
     rescue Interrupt
         write_log("[INFO] download skipped.")
+        $download_continue_flug = false
     end
     if url =~ /\.zip$/ then
         unzip_jar(filename)
@@ -303,6 +307,10 @@ end
 
 #BuildTools.jarを新規ディレクトリ内に移動してjavaコマンドでシェルからビルドしてjarファイル以外削除するメソッド
 def buildtool_build(jarname, mode)
+    if $download_continue_flug == false then
+        write_log("[INFO] download skipped.")
+        return
+    end
     FileUtils.rm_rf("./buildtool_built") if Dir.exist?("./buildtool_built")
     if mode != "True" then
         write_log("AutoUpdateMode is False. Skip building.")
