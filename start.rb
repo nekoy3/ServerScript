@@ -12,7 +12,10 @@ def main
 
     #A unless B 条件式Bが適合しないときに限りAを実行する
     Dir.mkdir("LogFiles") unless Dir.exist?("LogFiles")
-    FileUtils.touch("LogFiles/LatestLogFile.log") unless File.exist?("LogFiles/LatestLogFile.log")
+    File.delete("LogFiles/LatestLogFile.log") if File.exist?("LogFiles/LatestLogFile.log") #ログ出力ファイル
+    FileUtils.touch("LogFiles/LatestLogFile.log") 
+    File.delete("running_process.pid") if File.exist?("running_process.pid") #プロセスIDファイル
+    FileUtils.touch("running_process.pid")
     write_log("Starting Script. Reading config.ini file...")
 
     unless File.exist?("config.ini") then
@@ -116,6 +119,7 @@ def main
                 break
             elsif b
                 write_log("<#{al['screenName']}> Server start success. " + time)
+                parallel_script(al)
                 break
             end
         }
@@ -132,7 +136,7 @@ end
 
 def write_log(string)
     open('LogFiles/LatestLogFile.log', 'a'){|f|
-        line = "[" + now_time + "] " + string + "\n"
+        line = "[" + now_time + "] [start.rb] " + string + "\n"
         f.puts line
         puts line unless ARGV[0] == "nocslog"
     }
@@ -416,6 +420,36 @@ def unzip_jar(filename)
     FileUtils.mv("./archive/build/libs/" + filename, "./")
     FileUtils.rm_rf("./archive.zip")
 end
+
+#al['parallelScript']のシェルスクリプトを全て実行するメソッド
+def parallel_script(al)
+    scripts = al['parallelScript'].chomp.split(",")
+    return if scripts[0].downcase == "none"
+    write_log("[INFO] Parallel script start.")
+    scripts.each{ |script|
+        begin
+            script_file = File.basename(script)
+        rescue
+            write_log("[ERROR]  < " + script_path + " / " + script_file + " > Script not found. please write script path include directory name.")
+            return
+        end
+        script_path = File.dirname(script)
+        write_log("[INFO]  < " + script_path + " / " + script_file + " > Script start.")
+        $pid = nil
+        Dir.chdir(script_path) do
+            $pid = spawn("nohup ./" + script_file + " & > /dev/null 2>&1")
+        end
+
+        write_log("[INFO]  < " + script_path + "/" + script_file + " > Script success.")
+
+        #running_process.pidにプロセスIDをで書き込む
+        File.open("running_process.pid", "a") { |f|
+            f.puts($pid)
+        }
+        write_log("[INFO] Parallel script end.")
+    }
+end
+
 
 begin
     main
