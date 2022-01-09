@@ -51,13 +51,13 @@ def main
     }
     write_log("AutoUpdateMode = " + auto_update_mode)
     
-    sections.delete_at(0)                    
+    sections.delete_at(0) #Generalのhashを削除する                   
     section_hashes = [] #jarパス→buildtoolリンク→スクリーン名→並列稼働スクリプト（複数ある場合はカンマ区切り）の順でまとめたhashを配列として格納する
 
     sections.size.times{ |i|
         write_log("Reading section " + sections[i][0] + "...")
-        sections[0].delete_at(0)
-        section_hash = get_section_hash(sections[0])
+        sections[i].delete_at(0)
+        section_hash = get_section_hash(sections[i])
         write_log("section_hash " + section_hash.to_s)
     
         section_hash.each{|key,value|
@@ -197,28 +197,30 @@ end
 def get_section_hash(lines)
     server_jar, buildtool_url, screen_name, parallel_script, jar_update = nil
     lines.each { |line|
+        write_log("[DEBUG]  <#{line}>")
         case line
         when /^ServerJar=/ then
             server_jar = line.sub("ServerJar=","")
             write_log("ServerJar Loaded. -> " + server_jar)
         when /^BuildToolURL=/ then
             buildtool_url = line.sub("BuildToolURL=","")
-            write_log("BuildToolURL Loaded.")
+            write_log("BuildToolURL Loaded. -> " + buildtool_url)
         when /^ScreenName=/ then
             screen_name = line.sub("ScreenName=","")
-            write_log("ScreenName Loaded.")
+            write_log("ScreenName Loaded. -> " + screen_name)
         when /^ParallelScript=/ then
             parallel_script = line.sub("ParallelScript=","")
-            write_log("ParallelScript Loaded.")
+            write_log("ParallelScript Loaded. -> " + parallel_script)
         when /^JarUpdate=/ then
             jar_update = line.sub("JarUpdate=","").downcase
-            write_log("JarUpdate Loaded.")
+            write_log("JarUpdate Loaded. -> " + jar_update)
         else
             write_log("[ERROR] Invalid setting item. ->" + line)
             stop_script
         end
     }
 
+    buildtool_url = "https://example.com/" if jar_update == "false"
     begin
         section_hash = {"serverJar" => server_jar, "buildToolURL" => buildtool_url, "screenName" => screen_name, "parallelScript" => parallel_script, "jarUpdate" => jar_update} #Hash(辞書型)に格納
     rescue => e
@@ -363,12 +365,13 @@ def retry_start_server(al, name)
         end
     }
     sleep(3)
+    dir = File.dirname(al['serverJar'])
     File.delete(dir + "/logs/latest.log")
     result, err, status = Open3.capture3("screen -AdmSU #{al['screenName']} java -Xms2G -Xmx2G -jar #{name} nogui")
     loop{ 
-        b, time, err = check_log_and_startup_done(dir)
-        if err
-            write_log("[ERROR]  <#{al['screenName']}> Server start failed. ")
+        b, time, err_flag = check_log_and_startup_done(dir)
+        if err_flag
+            write_log("[ERROR]  <#{al['screenName']}> Server start failed. ->" + err)
             break
         elsif b
             write_log("<#{al['screenName']}> Server start success. " + time)
