@@ -84,15 +84,19 @@ def main
         end
 
         #buildtoolをダウンロードする
-        write_log("Download and checking BuildTools.jar...")
-        save_file(al['buildToolURL'], "BuildTools.jar", auto_update_mode)
-        if $download_continue_flug then
-            #BuildTools.jarをjavaコマンドでシェルからビルドする
-            write_log("Building BuildTools.jar...")
-            jarname = File.basename(al['serverJar'])
-            buildtool_build(jarname, auto_update_mode) #BuildTools.jarをビルドする buildtool_built/(server_jar).jar
+        if al['jarUpdate'] == "false" then
+            write_log("[INFO] jar update skipped.")
         else
-            write_log("Buildtool build skipped.")
+            write_log("Download and checking BuildTools.jar...")
+            save_file(al['buildToolURL'], "BuildTools.jar", auto_update_mode)
+            if $download_continue_flug then
+                #BuildTools.jarをjavaコマンドでシェルからビルドする
+                write_log("Building BuildTools.jar...")
+                jarname = File.basename(al['serverJar'])
+                buildtool_build(jarname, auto_update_mode) #BuildTools.jarをビルドする buildtool_built/(server_jar).jar
+            else
+                write_log("Buildtool build skipped.")
+            end
         end
 
         dir = File.dirname(al['serverJar']) #移動するためのディレクトリを取得
@@ -101,7 +105,7 @@ def main
         #geyser,floodgate,ビルドしたserverのjarをアーカイブに移動し、新しく取得したjarを保存するメソッド
         if auto_update_mode && $download_continue_flug
             write_log("Moving server jar to archive and new jar files...")
-            move_jar(dir, name, now_time)
+            move_jar(dir, name, now_time, al['jarUpdate'])
         end
 
         #サーバー起動フェーズ
@@ -158,8 +162,8 @@ def config_file_not_found
     write_log("[ERROR] Can't find config.ini! Please setting config.ini and please run the script again.")
     FileUtils.touch("config.ini")
     File.open("config.ini", "a"){|f|
-        f.puts "[General]\nGeyserSpigotURL=https://ci.opencollab.dev/job/GeyserMC/job/Geyser/job/master/lastSuccessfulBuild/artifact/bootstrap/spigot/target/Geyser-Spigot.jar\nFloodgateURL=https://ci.opencollab.dev/job/GeyserMC/job/Floodgate/job/master/lastSuccessfulBuild/artifact/spigot/target/floodgate-spigot.jar\nAutoUpdateMode=True\n\n"
-        f.puts "[testServer]\nServerJar=./testServer/testServer.jar\nBuildToolURL=http://(buildTools URL)\nScreenName=testServer\nParallelScript=None,None\nServerType=Spigot\n"
+        f.puts "[General]\n;プラグインに導入するgeyser-spigotのURLを記述\nGeyserSpigotURL=https://ci.opencollab.dev/job/GeyserMC/job/Geyser/job/master/lastSuccessfulBuild/artifact/bootstrap/spigot/target/Geyser-Spigot.jar\n;プラグインに使うfloodgateのurlを記述\nFloodgateURL=https://ci.opencollab.dev/job/GeyserMC/job/Floodgate/job/master/lastSuccessfulBuild/artifact/spigot/target/floodgate-spigot.jar\n;プラグインとjarファイルをアップデートするかを設定します。\nAutoUpdateMode=True\n\n"
+        f.puts "\n;セクションごとに1つのサーバーとして認識して起動する。\n[testServer]\n;サーバーのjarファイルのパス(サーバーディレクトリも含める)\nServerJar=./testServer/testServer.jar\n;jarファイルを更新するためのbuildtoolのurl(Tuinity等これで更新できない場合はJarUpdate=falseにして空欄にする)\nBuildToolURL=http://(buildTools URL)\n;サーバーを起動するscreenの名前を指定する（被り不可）\nScreenName=testServer\n;並行で起動する常駐スクリプトのファイルパス(不要ならNoneを入力)\nParallelScript=None\n;サーバーのjarファイルを自動でアップデートするか（ビルドに約二分かかります。）\nJarUpdate=true\n"
         f.puts "; Be sure to insert a blank line or comment line at the end of the section.\n; セクションの最後に必ず空白行またはコメント行を挿入してください。"
     }
     stop_script
@@ -191,7 +195,7 @@ end
 
 #sectionの配列を受け取り順番にhashに格納して返すメソッド
 def get_section_hash(lines)
-    server_jar, buildtool_url, screen_name, parallel_script = nil
+    server_jar, buildtool_url, screen_name, parallel_script, jar_update = nil
     lines.each { |line|
         case line
         when /^ServerJar=/ then
@@ -206,13 +210,17 @@ def get_section_hash(lines)
         when /^ParallelScript=/ then
             parallel_script = line.sub("ParallelScript=","")
             write_log("ParallelScript Loaded.")
+        when /^JarUpdate=/ then
+            jar_update = line.sub("JarUpdate=","").downcase
+            write_log("JarUpdate Loaded.")
         else
             write_log("[ERROR] Invalid setting item. ->" + line)
             stop_script
         end
     }
+
     begin
-        section_hash = {"serverJar" => server_jar, "buildToolURL" => buildtool_url, "screenName" => screen_name, "parallelScript" => parallel_script} #Hash(辞書型)に格納
+        section_hash = {"serverJar" => server_jar, "buildToolURL" => buildtool_url, "screenName" => screen_name, "parallelScript" => parallel_script, "jarUpdate" => jar_update} #Hash(辞書型)に格納
     rescue => e
         write_log("[ERROR] Can't get section hash. ->" + e.to_s)
         stop_script
@@ -370,7 +378,7 @@ def retry_start_server(al, name)
 end
 
 #jarファイルを定位置に移動し、バックアップも取得するメソッド
-def move_jar(dir, name, now_time)
+def move_jar(dir, name, now_time, jar_update)
     #既存のgeyser,floodgate,jarnameをbackup_jar/日付.gzアーカイブに移動する
     write_log("Moving plugins to backup_jar/...")
     #dir + "/backup_jar/" + name + "." + nowtime ディレクトリを作成
@@ -407,6 +415,9 @@ def move_jar(dir, name, now_time)
     files.each{ |f|
         FileUtils.cp("./" + f, dir + "/plugins/" + f )
     }
+    if jar_update == "false" then
+        return
+    end
     FileUtils.mv("./buildtool_built/" + name, dir + "/" + name)
 end
 
