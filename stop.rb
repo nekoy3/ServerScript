@@ -28,6 +28,7 @@ def main
                 end
             }
         }
+        File.delete("running_process.pid")
     else
         write_log("[ERROR] Can't find running_process.pid. skipped script stopping.")
     end
@@ -37,6 +38,14 @@ def main
         server_jar = section_hash["serverJar"]
         screen_name = section_hash["screenName"]
         write_log("Stopping <#{screen_name}>.")
+        text = "\"say 10秒後に再起動/停止します・・・再起動の場合は五分ほどお待ちください。 \\015\""
+        system("screen -p 0 -S #{screen_name} -X eval 'stuff #{text}'")
+        sleep 5
+        5.times { |i|
+            text = "\"say #{(5-i).to_s}秒前・・・ \\015\""
+            system("screen -p 0 -S #{screen_name} -X eval 'stuff #{text}'")
+            sleep 1
+        }
         cmd = "\"stop\\015\""
         system("screen -S #{screen_name} -X eval 'stuff #{cmd}'")
         if read_screen_log(server_jar) then

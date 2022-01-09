@@ -443,11 +443,12 @@ def parallel_script(al)
         write_log("[INFO]  < " + script_path + "/" + script_file + " > Script success.")
 
         #running_process.pidにプロセスIDをで書き込む
-        File.open("running_process.pid", "a") { |f|
-            f.puts($pid)
-        }
+        #File.open("running_process.pid", "a") { |f|
+        #    f.puts($pid)
+        #}
         write_log("[INFO] Parallel script end.")
     }
+    write_log("[INFO] Resident scripts should get their own PID at startup and add to running_process.pid (echo $$ >> ../running_process.pid)")
 end
 
 
