@@ -5,6 +5,8 @@ require 'open-uri'
 require 'open3'
 require 'zip'
 
+require './serverjar_build.rb'
+
 $download_continue_flug = true
 #メインメソッド
 def main
@@ -76,6 +78,10 @@ def main
     #整形された設定項目がsection_hashesに格納されている状態で処理を開始する
     write_log("Server setup job started.")
     section_hashes.each { |al|
+        if al['serverStart'] == "false" then
+            write_log("<#{al['screenName']}> Server setup job skipped.")
+            next
+        end
         write_log("Running server setup <" + al["serverJar"] + "> ...")
         check = %x( screen -ls | grep -c #{al['screenName']} ) 
         if check.to_i == 1 then
@@ -87,15 +93,19 @@ def main
         if al['jarUpdate'] == "false" then
             write_log("[INFO] jar update skipped.")
         else
-            write_log("Download and checking BuildTools.jar...")
-            save_file(al['buildToolURL'], "BuildTools.jar", auto_update_mode)
-            if $download_continue_flug then
-                #BuildTools.jarをjavaコマンドでシェルからビルドする
-                write_log("Building BuildTools.jar...")
+#            save_file(al['buildToolURL'], "BuildTools.jar", auto_update_mode)
+#            if $download_continue_flug then
+#                #BuildTools.jarをjavaコマンドでシェルからビルドする
+#                write_log("Building BuildTools.jar...")
                 jarname = File.basename(al['serverJar'])
-                buildtool_build(jarname, auto_update_mode) #BuildTools.jarをビルドする buildtool_built/(server_jar).jar
+#                buildtool_build(jarname, auto_update_mode) #BuildTools.jarをビルドする buildtool_built/(server_jar).jar
+#            else
+#                write_log("Buildtool build skipped.")
+#            end
+            if auto_update_mode && $download_continue_flug then
+                main_jarbuild(al['buildToolURL'], al['serverType'], al['serverVersion'], jarname)
             else
-                write_log("Buildtool build skipped.")
+                write_log("Server jar build skipped.")
             end
         end
 
@@ -162,8 +172,8 @@ def config_file_not_found
     write_log("[ERROR] Can't find config.ini! Please setting config.ini and please run the script again.")
     FileUtils.touch("config.ini")
     File.open("config.ini", "a"){|f|
-        f.puts "[General]\n;プラグインに導入するgeyser-spigotのURLを記述\nGeyserSpigotURL=https://ci.opencollab.dev/job/GeyserMC/job/Geyser/job/master/lastSuccessfulBuild/artifact/bootstrap/spigot/target/Geyser-Spigot.jar\n;プラグインに使うfloodgateのurlを記述\nFloodgateURL=https://ci.opencollab.dev/job/GeyserMC/job/Floodgate/job/master/lastSuccessfulBuild/artifact/spigot/target/floodgate-spigot.jar\n;プラグインとjarファイルをアップデートするかを設定します。\nAutoUpdateMode=True\n\n"
-        f.puts "\n;セクションごとに1つのサーバーとして認識して起動する。\n[testServer]\n;サーバーのjarファイルのパス(サーバーディレクトリも含める)\nServerJar=./testServer/testServer.jar\n;jarファイルを更新するためのbuildtoolのurl(Tuinity等これで更新できない場合はJarUpdate=falseにして空欄にする)\nBuildToolURL=http://(buildTools URL)\n;サーバーを起動するscreenの名前を指定する（被り不可）\nScreenName=testServer\n;並行で起動する常駐スクリプトのファイルパス(不要ならNoneを入力)\nParallelScript=None\n;サーバーのjarファイルを自動でアップデートするか（ビルドに約二分かかります。）\nJarUpdate=true\n"
+        f.puts "[General]\n;プラグインに導入するgeyser-spigotのURLを記述\nGeyserSpigotURL=https://ci.opencollab.dev/job/GeyserMC/job/Geyser/job/master/lastSuccessfulBuild/artifact/bootstrap/spigot/target/Geyser-Spigot.jar\n;プラグインに使うfloodgateのurlを記述\nFloodgateURL=https://ci.opencollab.dev/job/GeyserMC/job/Floodgate/job/master/lastSuccessfulBuild/artifact/spigot/target/floodgate-spigot.jar\n;プラグインとjarファイルをアップデートするかを設定します。\nViaVersionURL=https://ci.viaversion.com/job/ViaVersion/lastSuccessfulBuild/artifact/*zip*/archive.zip\nViaBackwardsURL=https://ci.viaversion.com/view/ViaBackwards/job/ViaBackwards/lastSuccessfulBuild/artifact/*zip*/archive.zip\nAutoUpdateMode=True\n\n"
+        f.puts "\n;セクションごとに1つのサーバーとして認識して起動する。\n[testServer]\n;サーバーのjarファイルのパス(サーバーディレクトリも含める)\n;falseにするとサーバーの起動をスキップする\nServerStart=True\nServerJar=./testServer/testServer.jar\n;jarファイルを更新するためのbuildtoolのurl(Tuinity等これで更新できない場合はJarUpdate=falseにして空欄にする)\nBuildToolURL=http://(buildTools URL)\n;サーバーを起動するscreenの名前を指定する（被り不可）\nScreenName=testServer\n;並行で起動する常駐スクリプトのファイルパス(不要ならNoneを入力)\nParallelScript=None\n;サーバーのjarファイルを自動でアップデートするか（ビルドに約二分かかります。）\nJarUpdate=true\n;サーバータイプを指定する。現在対応しているのはspigot,bukkit,paper\nServerType=spigot\n;サーバーのバージョンを指定する。存在しないバージョンであればinvilid versionを返しサーバーのjar取得をスキップする\nServerVersion=1.18.1\n\n"
         f.puts "; Be sure to insert a blank line or comment line at the end of the section.\n; セクションの最後に必ず空白行またはコメント行を挿入してください。"
     }
     stop_script
@@ -195,7 +205,7 @@ end
 
 #sectionの配列を受け取り順番にhashに格納して返すメソッド
 def get_section_hash(lines)
-    server_jar, buildtool_url, screen_name, parallel_script, jar_update = nil
+    server_jar, buildtool_url, screen_name, parallel_script, jar_update, server_start, server_type, server_version = nil
     lines.each { |line|
         write_log("[DEBUG]  <#{line}>")
         case line
@@ -214,6 +224,15 @@ def get_section_hash(lines)
         when /^JarUpdate=/ then
             jar_update = line.sub("JarUpdate=","").downcase
             write_log("JarUpdate Loaded. -> " + jar_update)
+        when /^ServerStart=/ then
+            server_start = line.sub("ServerStart=","").downcase
+            write_log("ServerStart Loaded. -> " + server_start)
+        when /^ServerType=/ then
+            server_type = line.sub("ServerType=","").downcase
+            write_log("ServerType Loaded. -> " + server_type)
+        when /^ServerVersion=/ then
+            server_version = line.sub("ServerVersion=","")
+            write_log("ServerVersion Loaded. -> " + server_version)
         else
             write_log("[ERROR] Invalid setting item. ->" + line)
             stop_script
@@ -222,7 +241,7 @@ def get_section_hash(lines)
 
     buildtool_url = "https://example.com/" if jar_update == "false"
     begin
-        section_hash = {"serverJar" => server_jar, "buildToolURL" => buildtool_url, "screenName" => screen_name, "parallelScript" => parallel_script, "jarUpdate" => jar_update} #Hash(辞書型)に格納
+        section_hash = {"serverJar" => server_jar, "buildToolURL" => buildtool_url, "screenName" => screen_name, "parallelScript" => parallel_script, "jarUpdate" => jar_update, "serverStart" => server_start, "serverType" => server_type, "serverVersion" => server_version} #Hash(辞書型)に格納
     rescue => e
         write_log("[ERROR] Can't get section hash. ->" + e.to_s)
         stop_script
@@ -317,43 +336,6 @@ def check_log_and_startup_done(dir)
         stop_script
     end
     return false, nil, nil
-end
-
-#BuildTools.jarを新規ディレクトリ内に移動してjavaコマンドでシェルからビルドしてjarファイル以外削除するメソッド
-def buildtool_build(jarname, mode)
-    if $download_continue_flug == false then
-        write_log("[INFO] download skipped.")
-        return
-    end
-    FileUtils.rm_rf("./buildtool_built") if Dir.exist?("./buildtool_built")
-    if mode != "True" then
-        write_log("AutoUpdateMode is False. Skip building.")
-        return
-    end
-
-    begin
-        result = Benchmark.realtime do
-            Dir.mkdir("./buildtool_built") unless Dir.exist?("./buildtool_built")
-            Dir.chdir("./buildtool_built") do
-                system("cp ../BuildTools.jar ./")
-                system("rm ../BuildTools.jar")
-                s, err, status = Open3.capture3("java -jar BuildTools.jar")
-                File.delete("BuildTools.jar")
-                system("ls | grep -v -E 'jar$' | xargs rm -r")
-                system("rename 's/.*/" + jarname + "/' *.jar")
-            end
-        end
-        write_log("BuildTools.jar built. Time: " + result.round(2).to_s + " seconds.")
-        begin
-            write_log("file -> " + Dir.glob("./bundler/versions/*.jar")[0].to_s)
-        rescue
-            return
-        end
-        #FileUtils.rm_rf("./bundler") if Dir.exist?("./bundler")
-
-    rescue Interrupt
-        write_log("[INFO] BuildTools.jar build skipped.")
-    end
 end
 
 #サーバーの起動に失敗した場合session.lockを削除しリトライする

@@ -146,21 +146,18 @@ end
 
 #ログファイルを読み出して最新行を監視し"Stopping server"がでたらtrueを返すメソッド
 def read_screen_log(server_jar)
-    i = 0
-    loop{
-        i += 1
-        log_file = File.dirname(server_jar) + "/logs/latest.log"
+    log_file = File.dirname(server_jar) + "/logs/latest.log"
+    latest_line = tail(log_file)
+    15.times{
         latest_line = tail(log_file)
         if latest_line.include?("All dimensions are saved") then
             return true
         end
         sleep(1)
-        #15秒経過したらタイムアウトを出力
-        if i == 15 then
-            write_log("[ERROR] Timeout. -> " + latest_line)
-            return false
-        end
     }
+    #15秒経過したらタイムアウトを出力
+    write_log("[ERROR] Timeout. -> " + latest_line)
+    return false
 end
 
 begin
