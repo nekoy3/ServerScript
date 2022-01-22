@@ -5,8 +5,6 @@ require 'open-uri'
 require 'open3'
 require 'zip'
 
-require './serverjar_build.rb'
-
 $download_continue_flug = true
 #メインメソッド
 def main
@@ -93,16 +91,12 @@ def main
         if al['jarUpdate'] == "false" then
             write_log("[INFO] jar update skipped.")
         else
-#            save_file(al['buildToolURL'], "BuildTools.jar", auto_update_mode)
-#            if $download_continue_flug then
-#                #BuildTools.jarをjavaコマンドでシェルからビルドする
-#                write_log("Building BuildTools.jar...")
+            save_file(al['buildToolURL'], "BuildTools.jar", auto_update_mode)
+            if $download_continue_flug then
                 jarname = File.basename(al['serverJar'])
-#                buildtool_build(jarname, auto_update_mode) #BuildTools.jarをビルドする buildtool_built/(server_jar).jar
-#            else
-#                write_log("Buildtool build skipped.")
-#            end
+            end
             if auto_update_mode && $download_continue_flug then
+                require './serverjar_build.rb'
                 main_jarbuild(al['buildToolURL'], al['serverType'], al['serverVersion'], jarname)
             else
                 write_log("Server jar build skipped.")
@@ -115,7 +109,7 @@ def main
         #geyser,floodgate,ビルドしたserverのjarをアーカイブに移動し、新しく取得したjarを保存するメソッド
         if auto_update_mode && $download_continue_flug
             write_log("Moving server jar to archive and new jar files...")
-            move_jar(dir, name, now_time, al['jarUpdate'])
+            backup_and_copy_jar(dir, name, now_time, al['jarUpdate'])
         end
 
         #サーバー起動フェーズ
@@ -159,7 +153,7 @@ end
 def stop_script
     write_log("Stopping script.")
     File.rename("./LogFiles/LatestLogFile.log","./LogFiles/" + now_time + ".log")
-    file_list = ["geyser-spigot.jar", "floodgate.jar", "ViaVersion.jar", "ViaBackwards.jar"]
+    file_list = ["geyser-spigot.jar", "floodgate.jar", "ViaVersion.jar", "ViaBackwards.jar", "spigot.jar"],+
     file_list.each{ |file|
         File.delete(file) if File.exist?(file)
     }
@@ -362,17 +356,20 @@ def retry_start_server(al, name)
     }
 end
 
-#jarファイルを定位置に移動し、バックアップも取得するメソッド
-def move_jar(dir, name, now_time, jar_update)
+#jarファイルを定位置にコピーし、バックアップも取得するメソッド
+def backup_and_copy_jar(dir, name, now_time, jar_update)
+    return if jar_update == "false"
     #既存のgeyser,floodgate,jarnameをbackup_jar/日付.gzアーカイブに移動する
-    write_log("Moving plugins to backup_jar/...")
     #dir + "/backup_jar/" + name + "." + nowtime ディレクトリを作成
     bkjar_dir = dir + "/backup_jar/" #バックアップディレクトリ
     bk_file = name + "_" + now_time + ".zip" #バックアップディレクトリに保存するzipファイル
     Dir.mkdir(bkjar_dir) unless Dir.exist?(bkjar_dir)
+
     Dir.chdir(bkjar_dir) do
-        Dir.mkdir("temp") unless Dir.exist?("temp")
+        Dir.mkdir("temp")
     end
+
+    #実行中のサーバーディレクトリ内のbkjar_dir/tempにjarファイルを移動する
     files = ["geyser-spigot.jar", "floodgate.jar", "ViaVersion.jar", "ViaBackwards.jar"]
     files.each{ |f|
         if File.exist?(dir + "/plugins/" + f ) then
@@ -382,7 +379,12 @@ def move_jar(dir, name, now_time, jar_update)
             write_log(dir + "/plugins/" + f + " not found.")
         end
     }
-    FileUtils.mv(name, bkjar_dir + "temp") if File.exist?(name)
+    if File.exist?(dir + "/" + name)
+        FileUtils.mv(dir + "/" + name, bkjar_dir + "temp")
+        write_log(dir + "/" + name + " moved to " + bkjar_dir + "temp")
+    else
+        write_log(dir + "/" + name + " not found.")
+    end
 
     #"temp"ディレクトリをzipアーカイブ(bk_file)化してbkjar_dirに移動する
     write_log("Compressing backup_jar/...")
@@ -394,16 +396,15 @@ def move_jar(dir, name, now_time, jar_update)
     end
     FileUtils.rm_rf(bkjar_dir + "temp")
     write_log("Removed " + bkjar_dir + "temp")
-
-    #カレントディレクトリのgeyser,floodgate,./buildtool_built/nameをcopyする
+    
+    #カレントディレクトリのgeyser,floodgate,./をcopyする
     write_log("Moving plugins to " + dir + "/...")
     files.each{ |f|
         FileUtils.cp("./" + f, dir + "/plugins/" + f )
     }
-    if jar_update == "false" then
-        return
-    end
-    FileUtils.mv("./buildtool_built/" + name, dir + "/" + name)
+
+    write_log("Copying jar to " + dir + "/... " + name)
+    FileUtils.cp(name, dir + "/" + name)
 end
 
 #zipファイルを解凍し中身をカレントディレクトリに展開するメソッド ※archive.zipであること viaversionの構成に準拠　必要であれば別途メソッドを用意する必要がある
